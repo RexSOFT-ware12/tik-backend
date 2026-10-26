@@ -142,7 +142,7 @@ Output only the words the avatar should speak. No reasoning, labels or markdown.
     try {
       if (connection) { try { await connection.disconnect(); } catch {} connection = null; }
       liveUsername = username; lastError = null;
-      connection = new TikTokLiveConnection(username, { processInitialData: false, enableExtendedGiftInfo: true });
+      connection = new TikTokLiveConnection(username, { processInitialData: false, enableExtendedGiftInfo: true, ...(process.env.EULER_API_KEY ? { signApiKey: process.env.EULER_API_KEY } : {}) });
       connection.on(WebcastEvent.CHAT, d => saveEvent({ type: 'chat', username: userOf(d), userId: idOf(d), text: textOf(d.comment), eventId: d.msgId || d.common?.msgId }));
       connection.on(WebcastEvent.MEMBER, d => saveEvent({ type: 'join', username: userOf(d), userId: idOf(d), eventId: d.common?.msgId || `${idOf(d)}-${d.memberCount || ''}-${Date.now()}` }));
       connection.on(WebcastEvent.GIFT, d => { const giftName = textOf(d.giftName || d.gift?.name || d.giftDetails?.giftName); saveEvent({ type: 'gift', username: userOf(d), userId: idOf(d), giftName, eventId: d.common?.msgId || `${idOf(d)}-${giftName}-${d.repeatCount || 1}-${Date.now()}` }); });
