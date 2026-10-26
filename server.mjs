@@ -29,7 +29,9 @@ const PRESENTER_URL =
   process.env.PRESENTER_URL ||
   "https://cdn.perxona.ai/prod/latest/widget/entry/presenter.js";
 const LLM_PROVIDER = (process.env.LLM_PROVIDER || "openai").toLowerCase();
-const LLM_API_KEY = process.env.LLM_API_KEY;
+const LLM_API_KEY =
+  process.env.LLM_API_KEY ||
+  (LLM_PROVIDER === "openai" ? process.env.OPENAI_API_KEY : undefined);
 const PRESENTER_TARGET = {
   avatarId: process.env.DEMO_FIXED_AVATAR_ID,
   sceneId: process.env.DEMO_FIXED_SCENE_ID,
@@ -627,7 +629,7 @@ app.get("/api/health", async (_req, res) => {
 });
 
 // GET /api/config → { mock, chat, presenterUrl, fixedTarget, chatbotId, subscriptionUrl }.
-// Cheap to poll: `chat` reports the presence of LLM_API_KEY, never the key, and
+// Cheap to poll: `chat` reports whether the configured provider has a key, never the key, and
 // resolveEmbedConfig()'s catalog lookup is memoized. No field says whether a
 // value was pinned or auto-picked — nothing may render that. This route has no
 // request-layer auth, so subscriptionUrl carries only the derived
@@ -641,7 +643,10 @@ app.get(
     const { target, chatbotId } = await resolveEmbedConfig();
     res.json({
       mock: USE_MOCK,
-      chat: Boolean(process.env.LLM_API_KEY),
+      chat: Boolean(
+        LLM_API_KEY ||
+          (LLM_PROVIDER === "openai" && process.env.GROQ_API_KEY),
+      ),
       presenterUrl: PRESENTER_URL,
       fixedTarget: target,
       chatbotId,
@@ -678,7 +683,7 @@ app.get(
 // GET  /api/avatars          GET  /api/avatars/:id    GET  /api/avatars/:id/motions
 // GET  /api/scenes           GET  /api/scenes/:id
 // GET  /api/credit
-// POST /api/chat             (disabled when LLM_API_KEY is unset → 501)
+// POST /api/chat             (disabled when the selected provider key is unset → 501)
 //
 // All routes below send CONNECT_SECRET_KEY upstream. There is no per-request
 // auth check on this server either — see README "Auth model".
@@ -757,9 +762,28 @@ const LLM_DEFAULTS = {
   },
 };
 
+function groqRequestConfig(messages) {
+  return {
+    url:
+      process.env.GROQ_BASE_URL ||
+      "https://api.groq.com/openai/v1/chat/completions",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+    },
+    body: {
+      model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
+      messages,
+    },
+  };
+}
+
 function llmRequestConfig(messages) {
   const fallback = LLM_DEFAULTS[LLM_PROVIDER] ?? LLM_DEFAULTS.openai;
-  const model = process.env.LLM_MODEL ?? fallback.model;
+  const model =
+    process.env.LLM_MODEL ??
+    (LLM_PROVIDER === "openai" ? process.env.OPENAI_MODEL : undefined) ??
+    fallback.model;
   if (LLM_PROVIDER === "anthropic") {
     const system = messages
       .filter(({ role }) => role === "system")
@@ -793,6 +817,38 @@ function llmRequestConfig(messages) {
   };
 }
 
+function llmProviderError(provider, status, payload) {
+  const providerError = payload?.error;
+  const code = providerError?.code || providerError?.type;
+  return Object.assign(
+    new Error(
+      `${provider} returned HTTP ${status}${code ? ` (${code})` : ""}.`,
+    ),
+    { status: 502, upstreamStatus: status, payload },
+  );
+}
+
+async function sendLlmRequest(provider, request) {
+  let response;
+  try {
+    response = await fetch(request.url, {
+      method: "POST",
+      headers: request.headers,
+      body: JSON.stringify(request.body),
+    });
+  } catch (error) {
+    throw Object.assign(
+      new Error(`${provider} request failed: ${error.message}`),
+      { status: 502, cause: error },
+    );
+  }
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw llmProviderError(provider, response.status, payload);
+  }
+  return payload;
+}
+
 async function requestLlmCompletion(messages) {
   if (LLM_PROVIDER !== "openai" && LLM_PROVIDER !== "anthropic") {
     throw Object.assign(
@@ -800,20 +856,39 @@ async function requestLlmCompletion(messages) {
       { status: 500 },
     );
   }
-  const request = llmRequestConfig(messages);
-  const response = await fetch(request.url, {
-    method: "POST",
-    headers: request.headers,
-    body: JSON.stringify(request.body),
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw Object.assign(new Error("LLM request failed."), {
-      status: 502,
-      payload,
-    });
+  if (LLM_PROVIDER === "openai" && !LLM_API_KEY && process.env.GROQ_API_KEY) {
+    return sendLlmRequest("Groq", groqRequestConfig(messages));
   }
-  return payload;
+  try {
+    return await sendLlmRequest(
+      LLM_PROVIDER === "openai" ? "OpenAI" : "Anthropic",
+      llmRequestConfig(messages),
+    );
+  } catch (primaryError) {
+    if (LLM_PROVIDER !== "openai" || !process.env.GROQ_API_KEY) {
+      throw primaryError;
+    }
+    try {
+      const payload = await sendLlmRequest(
+        "Groq fallback",
+        groqRequestConfig(messages),
+      );
+      console.warn("OpenAI chat request failed; using Groq fallback.");
+      return payload;
+    } catch (fallbackError) {
+      throw Object.assign(
+        new Error(
+          `OpenAI failed: ${primaryError.message} Groq fallback failed: ${fallbackError.message}`,
+        ),
+        {
+          status: 502,
+          upstreamStatus: fallbackError.upstreamStatus,
+          payload: fallbackError.payload,
+          cause: fallbackError,
+        },
+      );
+    }
+  }
 }
 
 function llmResponseText(payload) {
@@ -1096,7 +1171,7 @@ app.post(
 // POST /api/chat
 // Request: { messages: [...] } (OpenAI chat format).
 // Returns: the OpenAI-compatible chat-completion JSON from the configured endpoint.
-// Errors:  501 until LLM_API_KEY is set · 502 LLM upstream unreachable.
+// Errors:  501 until the selected provider key is set · 502 LLM upstream unreachable.
 // Note: chat talks directly to the configured LLM endpoint, not the Connect API,
 // so it does not send CONNECT_SECRET_KEY.
 // The size caps below are the only thing standing between this route and an
@@ -1107,9 +1182,12 @@ app.post(
 // browser the whole array, so the ceiling has to be re-stated here.
 // A demo-grade guard, not a rate limiter — see README's Limitations.
 app.post("/api/chat", async (req, res) => {
-  if (!process.env.LLM_API_KEY) {
+  if (
+    !LLM_API_KEY &&
+    !(LLM_PROVIDER === "openai" && process.env.GROQ_API_KEY)
+  ) {
     res.status(501).json({
-      error: "LLM_API_KEY not configured. Set it in .env to enable chat.",
+      error: "No API key configured for the selected LLM provider.",
     });
     return;
   }
@@ -1126,10 +1204,11 @@ app.post("/api/chat", async (req, res) => {
     // This route doesn't go through route() — it has its own try/catch
     // because requestLlmCompletion() isn't an upstreamJson() caller — so it
     // needs its own copy of the same server-console logging.
-    console.error(`POST /api/chat → ${err.status ?? 502}: ${err.message}`);
+    const detail = err.message;
+    console.error(`POST /api/chat → ${err.status ?? 502}: ${detail}`);
     res
       .status(err.status ?? 502)
-      .json({ error: "LLM upstream unreachable", message: String(err) });
+      .json({ error: "LLM upstream unreachable", message: detail });
   }
 });
 

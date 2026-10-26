@@ -127,16 +127,18 @@
               <span>
                 <strong>Your own LLM</strong>
                 <small>
-                  You run the model, with your <code>LLM_API_KEY</code>. No
+                  You run the model, with your <code>LLM_API_KEY</code> (or
+                  <code>OPENAI_API_KEY</code> for OpenAI). No
                   chatbot to manage — and no knowledge files or tools either,
                   since those live with the chatbot.
                 </small>
               </span>
             </label>
             <p id="source-own-hint" class="field-hint" hidden>
-              <code>LLM_API_KEY</code> is not set, so
+              No supported LLM API key is set, so
               <code>/api/chat</code> returns <code>501</code>. Set it in
-              <code>.env</code> and restart to enable this option.
+              <code>.env</code> and restart to enable this option. OpenAI also
+              accepts <code>OPENAI_API_KEY</code>.
             </p>
           </section>
 

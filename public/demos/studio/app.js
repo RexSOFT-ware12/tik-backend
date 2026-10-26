@@ -8,7 +8,7 @@
  *   4. Each assistant reply is piped into sv-presenter for live speech playback
  *
  * A source switch chooses who runs the model — a Connect-hosted chatbot or your
- * own LLM_API_KEY — and can be flipped mid-conversation. That is why the history
+ * own provider key — and can be flipped mid-conversation. That is why the history
  * is held provider-neutral as { role, text } and serialized only at the call
  * site: the Connect chat API takes a `parts` array,
  *   { role: "user"|"assistant", parts: [{ type: "text", text: "…" }] }
@@ -367,12 +367,12 @@ let chatHistory = [];
 
 /**
  * Which model answers. `"connect"` posts to the selected Connect chatbot;
- * `"own"` posts to /api/chat, which forwards to whatever LLM_API_KEY points at.
+ * `"own"` posts to /api/chat, which forwards to the configured provider key.
  * @type {"connect" | "own"}
  */
 let source = "connect";
 
-/** Whether LLM_API_KEY is configured — /api/chat 501s without it. */
+/** Whether the configured provider key is available — /api/chat 501s without one. */
 const ownLlmAvailable = Boolean(appConfig.chat);
 /** ID of the currently selected chatbot, or null. */
 let activeBotId = null;
@@ -1155,9 +1155,9 @@ function updateChatUI() {
       : `${verb} a chatbot to chat. Launch the presenter first to also hear the replies.`;
   } else {
     // The only way to land here: the own-LLM source is selected but the server
-    // reported chat: false. Say which variable, not just "unavailable".
+    // reported chat: false. Name the supported key variables.
     chatHintText.textContent =
-      "Set LLM_API_KEY in .env and restart the server to use your own model.";
+      "Set LLM_API_KEY (or OPENAI_API_KEY for OpenAI) in .env and restart the server.";
   }
 }
 
@@ -1390,7 +1390,7 @@ sourceRadios.forEach((radio) =>
   }),
 );
 
-// /api/chat 501s without LLM_API_KEY, and appConfig.chat is how the server
+// /api/chat 501s without a provider key, and appConfig.chat is how the server
 // says so. Until this demo read that flag it was reported and ignored — the
 // participant found out by sending a message and getting an error back.
 if (!ownLlmAvailable) {

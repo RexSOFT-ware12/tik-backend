@@ -5,7 +5,7 @@
 The full client, for when you are building the application itself. Where the [Embed demo](../embed/) shows the smallest integration that works, this one shows everything the SDK gives you:
 
 1. **Browse the catalog** — pick an avatar, scene, and voice from live Connect data.
-2. **Choose who runs the model** — a **source switch** selects a Perxona-hosted Connect chatbot or your own `LLM_API_KEY`. Flip it mid-conversation and the same history carries over.
+2. **Choose who runs the model** — a **source switch** selects a Perxona-hosted Connect chatbot or your own LLM key (`LLM_API_KEY`, or `OPENAI_API_KEY` for OpenAI). Flip it mid-conversation and the same history carries over.
 3. **Manage chatbots** — create, read, update, and delete chatbots through the Connect API (full CRUD), with knowledge files and function tools.
 4. **Hold a multi-turn conversation** — each user message goes to the active source; the reply is displayed in the chat log.
 5. **Hear every reply spoken aloud** — the reply is piped into `sv-presenter.present()`, so the avatar speaks it in real time, with an interrupt and a send lock that waits for speech to finish.
@@ -63,7 +63,7 @@ Two things to know before you copy the pattern:
 
 ### Step 2 — Choose Who Runs the Model
 
-Pick a **Model source** in the sidebar: **Connect Chatbot** (Perxona hosts it) or **Your own LLM** (`LLM_API_KEY`). The own-LLM option is disabled until that key is set, and says so.
+Pick a **Model source** in the sidebar: **Connect Chatbot** (Perxona hosts it) or **Your own LLM** (`LLM_API_KEY`, or `OPENAI_API_KEY` for OpenAI). With OpenAI selected, an optional `GROQ_API_KEY` enables automatic fallback if OpenAI fails. If both providers fail, `/api/chat` returns a 502 with both failure reasons.
 
 The remaining setup depends on which you picked. Connect needs a chatbot object — step 3. Your own LLM needs nothing further; skip to step 4.
 
@@ -132,7 +132,7 @@ The **Model source** control in the sidebar decides who answers:
 | Source              | Route                         | Needs                            |
 | ------------------- | ----------------------------- | -------------------------------- |
 | **Connect Chatbot** | `POST /api/chatbots/:id/chat` | a chatbot selected in the picker |
-| **Your own LLM**    | `POST /api/chat`              | `LLM_API_KEY` set in `.env`      |
+| **Your own LLM**    | `POST /api/chat`              | `LLM_API_KEY` or `OPENAI_API_KEY`; optional `GROQ_API_KEY` for OpenAI fallback |
 
 The own-LLM option stays disabled until `GET /api/config` reports `chat: true`, with the reason shown inline — the server advertises whether the key is present, never the key itself.
 
