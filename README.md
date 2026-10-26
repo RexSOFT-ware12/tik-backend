@@ -65,3 +65,7 @@ Live control routes require `X-Admin-Token` matching `LIVE_ADMIN_TOKEN`.
 Set `LIVE_HOST_NAME` and `LIVE_BRAND_NAME` in the backend environment. The built-in system prompt defines the TikTok LIVE entertainment host role, short speech-friendly replies, reliable join/gift behavior, trusted knowledge-base rules, safety, privacy, and no fabricated business facts. The OpenAI key remains backend-only.
 
 Viewer records and up to 12 recent message turns per viewer are stored in MongoDB. The dashboard shows recent snippets through the authenticated `GET /api/live/viewers` endpoint. This is conversation continuity, not perfect identity recognition: TikTok user IDs are preferred; when unavailable (such as screen-reading fallback), the normalized username is used and may be ambiguous. Configure an appropriate retention/deletion policy before using this with a large audience.
+
+## LIVE reaction classification
+
+LIVE events now include a `reactionType` value (`welcome`, `follow`, `gift`, `like`, `funny`, `surprise`, `thinking`, or `neutral`) alongside the existing event and reply fields. Event types are classified directly; comments use conservative keyword/emoji matching. This is a hint for the frontend motion mapper, not a guarantee about the viewer's intent. Existing stored events without this field remain compatible because the frontend falls back to classifying from the event type and text.

@@ -10,6 +10,7 @@ const eventSchema = new mongoose.Schema({
   text: String,
   giftName: String,
   replyText: String,
+  reactionType: { type: String, index: true },
   status: { type: String, default: 'new', index: true },
   createdAt: { type: Date, default: Date.now, index: true },
 }, { versionKey: false });
@@ -146,6 +147,19 @@ Output only the words the avatar should speak. No reasoning, labels or markdown.
     await saveEvent({ type: 'like_milestone', username: 'Viewer', text, eventId: `like|${now}` });
   }
 
+  function classifyReaction(type, text = "") {
+    const normalizedType = String(type || "").toLowerCase();
+    const message = String(text || "").toLowerCase();
+    if (["join", "welcome", "new_viewer"].includes(normalizedType)) return "welcome";
+    if (normalizedType === "follow") return "follow";
+    if (normalizedType === "gift") return "gift";
+    if (["like", "like_milestone"].includes(normalizedType)) return "like";
+    if (/(\b(lol|lmao|haha|hilarious|joke|funny|laugh)\b|😂|🤣)/i.test(message)) return "funny";
+    if (/(\b(wow|omg|shocked|surprise|unbelievable|no way)\b|😲|😮|😱)/i.test(message)) return "surprise";
+    if ((normalizedType === "chat" || normalizedType === "screen_comment") && /(\?|\b(why|how|what|explain|think|question)\b)/i.test(message)) return "thinking";
+    return "neutral";
+  }
+
   async function saveEvent({ type, username, userId, text, giftName, fallback, eventId }) {
     const signature = eventId || hash(`${type}|${userId}|${text}|${giftName}|${Date.now()}`);
     if (seen.has(signature)) return;
@@ -171,7 +185,8 @@ Output only the words the avatar should speak. No reasoning, labels or markdown.
       viewer.lastConversationAt = new Date();
       await viewer.save().catch(e => console.error('Could not save viewer conversation:', e.message));
     }
-    await LiveEvent.create({ eventId: signature, type, username, userId, text, giftName, replyText, status: 'new' }).catch(e => { if (e.code !== 11000) console.error('Could not save live event:', e.message); });
+    const reactionType = classifyReaction(type, text);
+    await LiveEvent.create({ eventId: signature, type, username, userId, text, giftName, replyText, reactionType, status: 'new' }).catch(e => { if (e.code !== 11000) console.error('Could not save live event:', e.message); });
   }
 
   app.get('/api/live/status', requireAdmin, async (_req, res) => res.json({ connected, username: liveUsername, error: lastError, mongo: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected', openaiConfigured: Boolean(process.env.OPENAI_API_KEY || process.env.LLM_API_KEY), groqConfigured: Boolean(process.env.GROQ_API_KEY) }));

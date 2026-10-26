@@ -3,16 +3,22 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Perxona Connect Kit — Studio</title>
+    <title>Avatar Studio — LIVE Host AI</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" /><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;800&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
     <div id="app">
       <!-- ── Sidebar ─────────────────────────────────────────────────── -->
-      <aside class="sidebar">
+      <header class="topbar">
+        <a class="brandmark" href="/">LIVE<b>AI</b></a><span class="crumb">Avatar Studio</span><span class="spacer"></span>
+        <span id="presenter-chip" class="chip"><i></i>Presenter idle</span>
+        <a class="toplink" href="/">Control room</a>
+      </header>
+      <aside class="sidebar" data-panel="setup">
         <div class="sidebar-inner">
-          <p class="brand">Perxona Connect Kit</p>
-          <p class="demo-label">Studio Demo</p>
+          
 
           <!-- ── Credit usage ─────────────────────────────────────────── -->
           <!-- First section on purpose: this is the sample's example of calling
@@ -68,6 +74,28 @@
             </div>
             <button id="init-btn" disabled>Launch Presenter</button>
             <p id="status-msg" class="status"></p>
+          </section>
+
+          <!-- ── Motion & reaction library ─────────────────────────────── -->
+          <section class="sidebar-section" id="motion-library">
+            <div class="section-label-row">
+              <p class="section-label">Motion &amp; Reactions</p>
+              <button id="motion-refresh-btn" type="button" class="btn-icon btn-ghost" title="Reload avatar motions" aria-label="Reload avatar motions">↻</button>
+            </div>
+            <p class="section-note">Choose motions from the selected avatar's real motion catalog. Unmapped events keep the presenter's automatic motion selection.</p>
+            <p id="motion-status" class="status" aria-live="polite">Select an avatar to load its motions.</p>
+            <label class="field"><span>Welcome / new viewer</span><select data-motion-category="welcome" disabled><option value="">Automatic motion</option></select></label>
+            <label class="field"><span>Follow</span><select data-motion-category="follow" disabled><option value="">Automatic motion</option></select></label>
+            <label class="field"><span>Gift / celebration</span><select data-motion-category="gift" disabled><option value="">Automatic motion</option></select></label>
+            <label class="field"><span>Like milestone</span><select data-motion-category="like" disabled><option value="">Automatic motion</option></select></label>
+            <label class="field"><span>Funny / laughter comment</span><select data-motion-category="funny" disabled><option value="">Automatic motion</option></select></label>
+            <label class="field"><span>Surprise / shock comment</span><select data-motion-category="surprise" disabled><option value="">Automatic motion</option></select></label>
+            <label class="field"><span>Thinking / question</span><select data-motion-category="thinking" disabled><option value="">Automatic motion</option></select></label>
+            <div class="motion-test-row">
+              <label class="field"><span>Test motion</span><select id="motion-test-select" disabled><option value="">Select a motion</option></select></label>
+              <button id="motion-test-btn" type="button" class="btn-ghost" disabled>Test</button>
+            </div>
+            <p class="field-hint">Motion assignments are saved in this browser for each avatar. The motion catalog comes from Perxona; external animation files are not uploaded by this panel.</p>
           </section>
 
           <!-- ── Model source ─────────────────────────────────────────── -->
@@ -309,35 +337,21 @@
 
       <!-- ── Main area ───────────────────────────────────────────────── -->
       <main class="main">
-        <!-- Presenter stage -->
-        <div class="stage">
+        <section class="stage-col" data-panel="stage">
+        <div class="stage-bar"><div class="seg" role="group" aria-label="Stage shape"><button type="button" data-ratio="9:16" aria-pressed="true">Portrait</button><button type="button" data-ratio="16:9" aria-pressed="false">Landscape</button></div><label class="cap-toggle"><input type="checkbox" id="caption-toggle" checked /> Captions</label><button type="button" id="broadcast-btn" class="btn-sm">Full screen</button></div>
+        <div class="stage" data-ratio="9:16">
           <div id="stage-placeholder" class="placeholder">
             <p>
               Select an avatar &amp; scene,<br />then click Launch Presenter.
             </p>
           </div>
+          <div id="caption" class="caption" aria-live="polite" hidden></div>
+          <button type="button" id="broadcast-exit" class="bc-exit btn-ghost btn-sm" hidden>Exit full screen</button>
           <sv-presenter hidden style="width: 100%; height: 100%"></sv-presenter>
-
-          <!-- ── Debug timeline panel ─────────────────────────────────── -->
-          <!-- Shows the full lifecycle of each chat turn: user message →
-               chatbot API → reply → presenter commands → SDK events. -->
-          <div id="debug-panel" class="debug-panel" hidden>
-            <div class="debug-panel-header">
-              <span class="debug-panel-title">⏱ Conversation Timeline</span>
-              <button
-                type="button"
-                id="debug-clear-btn"
-                class="debug-clear-btn"
-                aria-label="Clear timeline"
-              >
-                Clear
-              </button>
-            </div>
-            <ol id="debug-log" class="debug-log"></ol>
-          </div>
         </div>
+        </section>
 
-        <!-- Chat area -->
+        <section class="side-col" data-panel="chat">
         <div class="chat-area">
           <div id="chat-placeholder" class="chat-placeholder">
             <p id="chat-hint-text">
@@ -370,9 +384,30 @@
             </form>
           </div>
         </div>
+
+          <!-- ── Debug timeline panel ─────────────────────────────────── -->
+          <!-- Shows the full lifecycle of each chat turn: user message →
+               chatbot API → reply → presenter commands → SDK events. -->
+          <div id="debug-panel" class="debug-panel" hidden>
+            <div class="debug-panel-header">
+              <span class="debug-panel-title">⏱ Conversation Timeline</span>
+              <button
+                type="button"
+                id="debug-clear-btn"
+                class="debug-clear-btn"
+                aria-label="Clear timeline"
+              >
+                Clear
+              </button>
+            </div>
+            <ol id="debug-log" class="debug-log"></ol>
+          </div>
+        </section>
       </main>
+      <nav class="tabbar" role="tablist" aria-label="Studio views"><button role="tab" data-view="setup">Setup</button><button role="tab" data-view="stage">Stage</button><button role="tab" data-view="chat">Chat</button></nav>
     </div>
 
     <script type="module" src="app.js"></script>
+    <script type="module" src="layout.js"></script>
   </body>
 </html>

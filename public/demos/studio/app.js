@@ -138,19 +138,9 @@ const sourceOwnHint = document.getElementById("source-own-hint");
 const sourceLabel = document.getElementById("active-source-label");
 const chatbotManager = document.getElementById("chatbot-manager");
 
-// The one place this demo hand-writes motion markup, and the only kind of place
-// that earns it: a specific action at a specific moment. Everything the chatbot
-// replies with is sent as plain text, because the Connect API picks motions on
-// its own — that is the normal case, not a fallback.
-//
-// Two things to know before copying this pattern:
-//   1. A message containing ANY motion mark skips automatic motion selection for
-//      the whole utterance. Markup is all-or-nothing per message, not a hint
-//      layered on top of the automatic choice.
-//   2. A motion id your Connect account cannot see is dropped, not rejected — the
-//      line still speaks, it just carries no gesture. Combined with (1) that
-//      means this greeting is silent-handed on any account but the one the id
-//      came from. Replace it with an id from your own catalog.
+// Motion markup is now generated only by the verified Motion & Reactions
+// mapping below. Normal replies remain plain text so the Connect API can pick
+// its own motions whenever no compatible user-selected motion is configured.
 // The two ways the chat can be busy: a request is in flight, or a performance is
 // open. Both are read by syncChatControls() and written nowhere but the two
 // setters beside it — a third writer that knows only one of them is what this
@@ -158,8 +148,7 @@ const chatbotManager = document.getElementById("chatbot-manager");
 let isSpeaking = false;
 let isAwaitingReply = false;
 
-const GREETING =
-  "Hi there! [MOTION 01KRW97VSEA5G49W2YXWGV8JRV:1] Ask me anything.";
+const GREETING = "Hi there! Ask me anything.";
 
 // Prefilled so a new organization can reach a working avatar by pressing Save.
 // Every reply is read aloud by present(), so the instructions ask for short
@@ -204,11 +193,138 @@ const debugClearBtn = document.getElementById("debug-clear-btn");
 /** @type {HTMLElement & import('@perxona/presenter-types').IPresentationWidget} */
 const presenter = document.querySelector("sv-presenter");
 
+// Motion catalog and event-to-motion mapping. Only IDs returned by the selected
+// avatar's own catalog are used; unknown IDs are never injected into speech.
+const motionStatus = document.getElementById("motion-status");
+const motionRefreshBtn = document.getElementById("motion-refresh-btn");
+const motionTestSelect = document.getElementById("motion-test-select");
+const motionTestBtn = document.getElementById("motion-test-btn");
+const motionCategorySelects = [...document.querySelectorAll("[data-motion-category]")];
+let avatarMotions = [];
+let motionCatalogAvatarId = "";
+let motionCatalogGeneration = 0;
+const motionStorageKey = (avatarId) => `LIVE_MOTION_MAP:${avatarId}`;
+function motionIdOf(item) {
+  const id = item?.id ?? item?.motion_id ?? item?.motionId ?? item?.motion_asset_id ?? item?.motionAssetId ?? item?.asset_id ?? item?.assetId;
+  return id == null ? "" : String(id).trim();
+}
+function motionNameOf(item) {
+  return String(item?.name || item?.title || item?.display_name || item?.displayName || item?.label || motionIdOf(item) || "Motion").trim();
+}
+function readMotionMap() {
+  try { return JSON.parse(localStorage.getItem(motionStorageKey(avatarSelect.value)) || "{}"); }
+  catch { return {}; }
+}
+function saveMotionMap() {
+  if (!avatarSelect.value) return;
+  const map = Object.fromEntries(motionCategorySelects.map(select => [select.dataset.motionCategory, select.value]));
+  try { localStorage.setItem(motionStorageKey(avatarSelect.value), JSON.stringify(map)); } catch {}
+}
+function fillMotionSelect(select, items, emptyLabel, selectedId = "") {
+  select.replaceChildren(new Option(emptyLabel, ""));
+  for (const item of items) {
+    const id = motionIdOf(item);
+    if (id) select.add(new Option(motionNameOf(item), id));
+  }
+  select.disabled = !items.some(item => motionIdOf(item));
+  select.value = selectedId && [...select.options].some(option => option.value === selectedId) ? selectedId : "";
+}
+async function loadMotionCatalog() {
+  const avatarId = avatarSelect.value;
+  const generation = ++motionCatalogGeneration;
+  avatarMotions = [];
+  motionCatalogAvatarId = "";
+  motionCategorySelects.forEach(select => { select.disabled = true; select.replaceChildren(new Option("Loading motions…", "")); });
+  fillMotionSelect(motionTestSelect, [], "Loading motions…");
+  motionTestBtn.disabled = true;
+  if (!avatarId) {
+    motionStatus.textContent = "Select an avatar to load its motions.";
+    motionStatus.dataset.state = "";
+    return;
+  }
+  motionStatus.textContent = "Loading this avatar's motion catalog…";
+  motionStatus.dataset.state = "";
+  try {
+    const result = await request(`/api/avatars/${encodeURIComponent(avatarId)}/motions`);
+    if (generation !== motionCatalogGeneration || avatarSelect.value !== avatarId) return;
+    const items = Array.isArray(result) ? result : Array.isArray(result?.items) ? result.items : Array.isArray(result?.data) ? result.data : [];
+    avatarMotions = items.filter(item => motionIdOf(item));
+    motionCatalogAvatarId = avatarId;
+    const saved = readMotionMap();
+    motionCategorySelects.forEach(select => {
+      fillMotionSelect(select, avatarMotions, "Automatic motion", saved[select.dataset.motionCategory] || "");
+      select.disabled = avatarMotions.length === 0;
+    });
+    fillMotionSelect(motionTestSelect, avatarMotions, "Select a motion");
+    motionTestSelect.disabled = avatarMotions.length === 0;
+    motionTestBtn.disabled = avatarMotions.length === 0 || !presenterReady || !motionTestSelect.value;
+    motionStatus.textContent = avatarMotions.length
+      ? `Loaded ${avatarMotions.length} motions for this avatar. Choose reactions below.`
+      : "The avatar returned no motions with recognizable IDs. Automatic motion selection remains enabled.";
+    motionStatus.dataset.state = avatarMotions.length ? "success" : "";
+  } catch (err) {
+    if (generation !== motionCatalogGeneration) return;
+    motionStatus.textContent = `Could not load motions: ${err.message}. Automatic motion selection remains enabled.`;
+    motionStatus.dataset.state = "error";
+    motionCategorySelects.forEach(select => { select.disabled = true; select.replaceChildren(new Option("Automatic motion", "")); });
+    fillMotionSelect(motionTestSelect, [], "Motion catalog unavailable");
+    motionTestBtn.disabled = true;
+  }
+}
+function chooseReactionMotion(event) {
+  if (!event || motionCatalogAvatarId !== avatarSelect.value || !avatarMotions.length) return "";
+  const type = String(event.type || "").toLowerCase();
+  const text = `${event.text || ""} ${event.replyText || ""}`.toLowerCase();
+  let category = String(event.reactionType || "").toLowerCase();
+  if (category === "neutral") category = "";
+  if (!category) {
+    if (["join", "welcome", "new_viewer"].includes(type)) category = "welcome";
+    else if (type === "follow") category = "follow";
+    else if (type === "gift") category = "gift";
+    else if (["like", "like_milestone"].includes(type)) category = "like";
+    else if (/(\b(lol|lmao|haha|hilarious|joke|funny|laugh)\b|😂|🤣)/i.test(text)) category = "funny";
+    else if (/(\b(wow|omg|shocked|surprise|unbelievable|no way)\b|😲|😮|😱)/i.test(text)) category = "surprise";
+    else if ((type === "chat" || type === "screen_comment") && /(\?|\b(why|how|what|explain|think|question)\b)/i.test(text)) category = "thinking";
+  }
+  const selected = category && document.querySelector(`[data-motion-category="${category}"]`)?.value;
+  return selected && avatarMotions.some(item => motionIdOf(item) === selected) ? selected : "";
+}
+function withReactionMotion(event) {
+  const motionId = chooseReactionMotion(event);
+  if (!motionId || !event.replyText) return event.replyText || "";
+  // Explicit motion markup disables auto-selection for that utterance, so add
+  // it only when the selected ID is verified in this avatar's motion catalog.
+  return `[MOTION ${motionId}:1] ${event.replyText}`;
+}
+motionCategorySelects.forEach(select => select.addEventListener("change", saveMotionMap));
+avatarSelect.addEventListener("change", () => { loadMotionCatalog(); });
+motionRefreshBtn?.addEventListener("click", () => { loadMotionCatalog(); });
+motionTestSelect?.addEventListener("change", () => { motionTestBtn.disabled = !presenterReady || !motionTestSelect.value; });
+motionTestBtn?.addEventListener("click", async () => {
+  const motionId = motionTestSelect.value;
+  if (!presenterReady || !motionId || !avatarMotions.some(item => motionIdOf(item) === motionId)) return;
+  motionTestBtn.disabled = true;
+  try {
+    setSpeaking(true);
+    const result = await presenter.present(`[MOTION ${motionId}:1] Testing this motion.`);
+    if (!result?.success) appendDebug("err", `Motion test failed: ${result?.code ?? ""} ${result?.message ?? ""}`);
+  } catch (err) { appendDebug("err", `Motion test failed: ${err.message}`); }
+  finally { setSpeaking(false); motionTestBtn.disabled = !presenterReady || !motionTestSelect.value; }
+});
+
 // TikTok LIVE event listener: the backend is the source of truth; speech is
 // queued through the existing avatar presenter so the avatar remains visual-only.
 let liveEventCursor = new Date(Date.now() - 60_000).toISOString();
 let liveSpeechQueue = Promise.resolve();
 let livePollingStarted = false;
+/** Resolves once nothing is being spoken and the tab is visible (or after a safety timeout). */
+function waitUntilIdle(timeoutMs = 90_000) {
+  return new Promise((resolve) => {
+    const started = Date.now();
+    const tick = () => ((!isSpeaking && !document.hidden) || Date.now() - started > timeoutMs ? resolve() : setTimeout(tick, 250));
+    tick();
+  });
+}
 async function pollTikTokLiveEvents() {
   if (!ADMIN_TOKEN || !API_BASE || !presenterReady) return;
   try {
@@ -216,10 +332,19 @@ async function pollTikTokLiveEvents() {
     for (const event of (result.events || [])) {
       if (event.createdAt) liveEventCursor = new Date(event.createdAt).toISOString();
       if (!event.replyText) continue;
+      // Strict first-in-first-out: each reply waits until the avatar has finished the
+      // previous one (and the tab is visible) before it is queued, so nothing talks over
+      // or cuts off another line.
       liveSpeechQueue = liveSpeechQueue.then(async () => {
         if (!presenterReady) return;
-        try { await presenter.present(event.replyText); }
-        catch (err) { appendDebug("err", `LIVE speech failed: ${err.message}`); }
+        await waitUntilIdle();
+        setSpeaking(true);
+        try {
+          const spokenText = withReactionMotion(event);
+          if (spokenText !== event.replyText) appendDebug("cmd", `Reaction motion selected for ${event.type}.`);
+          const result = await presenter.present(spokenText);
+          if (!result?.success) { setSpeaking(false); appendDebug("err", `LIVE speech failed: ${result?.code ?? ""} ${result?.message ?? ""}`); }
+        } catch (err) { setSpeaking(false); appendDebug("err", `LIVE speech failed: ${err.message}`); }
       }).catch(() => {});
     }
   } catch (err) {
@@ -382,7 +507,14 @@ creditRefreshBtn.addEventListener("click", () => {
  * Fill a picker and preselect the first item, so Launch is one click away.
  * `emptyLabel` stays selectable — clearing the voice selects BYO-TTS.
  */
-function fillSelect(select, items, emptyLabel) {
+/** Best-effort "female" check from whatever metadata the catalog exposes. */
+const isFemale = (item) =>
+  /^f(emale)?$/i.test(String(item.gender ?? "")) ||
+  /\b(female|woman|girl)\b/i.test(
+    [item.name, item.description, item.style, (item.tags ?? []).join(" ")].join(" "),
+  );
+
+function fillSelect(select, items, emptyLabel, storageKey, prefer) {
   select.replaceChildren(
     Object.assign(document.createElement("option"), {
       value: "",
@@ -395,7 +527,17 @@ function fillSelect(select, items, emptyLabel) {
       return opt;
     }),
   );
-  select.value = items[0]?.id ?? "";
+  select.value = (prefer && items.find(prefer)?.id) ?? items[0]?.id ?? "";
+  // Restore the last choice made on this browser, if it still exists.
+  const saved = storageKey && localStorage.getItem(storageKey);
+  if (saved !== null && saved !== false && (saved !== "" ? items.some((i) => i.id === saved) : storageKey.endsWith("VOICE"))) {
+    select.value = saved;
+  }
+}
+
+/** Remember a presenter choice until the person changes it. */
+function remember(key, value) {
+  try { localStorage.setItem(key, value); } catch { /* storage unavailable */ }
 }
 
 function updateAssetIcon(img, items, id, thumbnailKey) {
@@ -424,16 +566,19 @@ function updateInitBtn() {
 }
 
 avatarSelect.addEventListener("change", () => {
+  remember("LIVE_PRESENTER_AVATAR", avatarSelect.value);
   updateInitBtn();
   updateAssetIcon(avatarIcon, avatars, avatarSelect.value, "head");
 });
 sceneSelect.addEventListener("change", () => {
+  remember("LIVE_PRESENTER_SCENE", sceneSelect.value);
   updateInitBtn();
   updateAssetIcon(sceneIcon, scenes, sceneSelect.value, "default");
 });
 // voiceId is only read at initializeWithConnectKey() time, so switching
 // voice must re-enable Launch the same way avatar/scene changes do.
 voiceSelect.addEventListener("change", () => {
+  remember("LIVE_PRESENTER_VOICE", voiceSelect.value);
   updateInitBtn();
   updateVoiceLanguages();
 });
@@ -470,13 +615,16 @@ async function loadCatalog() {
     avatars = avatarList;
     scenes = sceneList;
     voices = voiceList;
-    fillSelect(avatarSelect, avatarList, "— select avatar —");
-    fillSelect(sceneSelect, sceneList, "— select scene —");
-    fillSelect(voiceSelect, voiceList, "— no voice —");
+    fillSelect(avatarSelect, avatarList, "— select avatar —", "LIVE_PRESENTER_AVATAR", isFemale);
+    fillSelect(sceneSelect, sceneList, "— select scene —", "LIVE_PRESENTER_SCENE");
+    fillSelect(voiceSelect, voiceList, "— no voice —", "LIVE_PRESENTER_VOICE", isFemale);
     updateVoiceLanguages();
     updateInitBtn();
     updateAssetIcon(avatarIcon, avatars, avatarSelect.value, "head");
+    loadMotionCatalog();
     updateAssetIcon(sceneIcon, scenes, sceneSelect.value, "default");
+    window.__catalog = { avatars, scenes };
+    window.dispatchEvent(new CustomEvent("catalog-loaded"));
     if (isPresenterLaunchDisabled) {
       stagePlaceholder.querySelector("p").textContent =
         "Mock mode supports catalog browsing only.";
@@ -508,6 +656,7 @@ presenter.addEventListener("PRESENTER_STATUS", (e) => {
   setStatus(STATUS_LABELS[status] ?? status);
   if (status === "Ready") {
     presenterReady = true;
+    if (motionTestSelect) motionTestBtn.disabled = !motionTestSelect.value || !avatarMotions.length;
     isLaunching = false;
     stagePlaceholder.hidden = true;
     presenter.hidden = false;
