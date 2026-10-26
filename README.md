@@ -5,7 +5,7 @@ This build keeps the existing Perxona `sv-presenter` avatar integration and adds
 - **Primary input:** the backend listens to public TikTok LIVE chat, member/join and gift events with `tiktok-live-connector`.
 - **Fallback input:** the browser can share a TikTok LIVE Studio window and periodically send reduced-resolution screenshots to the backend for OpenAI vision extraction.
 - **AI host:** OpenAI creates short spoken responses; the existing avatar presenter speaks them when Avatar Studio is open and the presenter has been initialized.
-- **Knowledge:** custom facts/FAQs are stored in MongoDB through Mongoose and included in AI context.
+- **Knowledge:** custom facts/FAQs are stored in MongoDB through Mongoose and included in AI context.\n- **Viewer memory:** viewers are saved by TikTok user ID where available, otherwise by normalized username; recent conversation turns are reused for continuity and returning-viewer greetings. The dashboard includes a Viewer memory panel.
 - **Hosting:** the Render Blueprint deploys the Node 22.9+ Express service and serves the static dashboard; the frontend can also be hosted separately.
 
 For Render deployment steps and required environment variables, see [README-HOSTING.md](./README-HOSTING.md).
@@ -53,9 +53,15 @@ The frontend stores the backend URL and admin token in that browser's local stor
 - `POST /api/live/connect` `{ "username": "creator" }`
 - `POST /api/live/disconnect`
 - `GET /api/live/events?after=<ISO timestamp>`
-- `GET /api/live/knowledge`
+- `GET /api/live/viewers?limit=30` (authenticated viewer-memory list)\n- `GET /api/live/knowledge`
 - `POST /api/live/knowledge` `{ "title": "...", "content": "..." }`
 - `DELETE /api/live/knowledge/:id`
 - `POST /api/live/screen-observation` `{ "image": "data:image/jpeg;base64,..." }`
 
 Live control routes require `X-Admin-Token` matching `LIVE_ADMIN_TOKEN`.
+
+## Host personality and returning-viewer memory
+
+Set `LIVE_HOST_NAME` and `LIVE_BRAND_NAME` in the backend environment. The built-in system prompt defines the TikTok LIVE entertainment host role, short speech-friendly replies, reliable join/gift behavior, trusted knowledge-base rules, safety, privacy, and no fabricated business facts. The OpenAI key remains backend-only.
+
+Viewer records and up to 12 recent message turns per viewer are stored in MongoDB. The dashboard shows recent snippets through the authenticated `GET /api/live/viewers` endpoint. This is conversation continuity, not perfect identity recognition: TikTok user IDs are preferred; when unavailable (such as screen-reading fallback), the normalized username is used and may be ambiguous. Configure an appropriate retention/deletion policy before using this with a large audience.

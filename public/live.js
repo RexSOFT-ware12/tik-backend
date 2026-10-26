@@ -16,7 +16,7 @@
   $('saveConfig').onclick = () => {
     apiBase = $('apiUrl').value.trim().replace(/\/$/, ''); token = $('adminToken').value.trim();
     localStorage.setItem('TIKTOK_BACKEND_URL', apiBase); localStorage.setItem('TIKTOK_ADMIN_TOKEN', token); localStorage.setItem('TIKTOK_USERNAME', $('username').value.trim());
-    message('Connection settings saved in this browser.'); refreshStatus(); loadKnowledge();
+    message('Connection settings saved in this browser.'); refreshStatus(); loadKnowledge(); loadViewers();
   };
   function pill(connected) { $('statusPill').className = `pill ${connected ? 'on' : 'off'}`; $('statusPill').textContent = connected ? 'Event stream connected' : 'Not connected'; $('connectionMetric').textContent = connected ? 'Connected' : 'Offline'; $('connectionSub').textContent = connected ? `@${$('username').value.replace(/^@/,'')}` : 'Direct event listener'; }
   $('connectBtn').onclick = async () => { try { const username = $('username').value.trim().replace(/^@/, ''); if (!username) throw new Error('Enter the TikTok username first.'); localStorage.setItem('TIKTOK_USERNAME', username); message('Connecting to TikTok LIVE…'); const d = await api('/api/live/connect', { method:'POST', body: JSON.stringify({ username }) }); pill(true); message(d.message || 'Connected.'); startPolling(); } catch(e) { pill(false); message(e.message, true); } };
@@ -25,12 +25,34 @@
   function renderEvents(events) { if (!events.length && !$('eventList').dataset.loaded) $('eventList').innerHTML = '<div class="empty">No recent activity yet. Keep this page open during your stream.</div>'; $('eventList').dataset.loaded = '1'; for (const e of events) { const div = document.createElement('article'); div.className='event'; const type = e.type === 'screen_comment' ? 'Screen chat' : e.type; div.innerHTML = `<div class="event-type"></div><div><strong></strong><p class="source-text"></p><p class="reply"></p></div>`; div.querySelector('.event-type').textContent = type; div.querySelector('strong').textContent = `${e.username || 'Viewer'}${e.giftName ? ' · ' + e.giftName : ''}`; div.querySelector('.source-text').textContent = e.text || (e.type === 'join' ? 'Joined the LIVE' : e.giftName ? 'Sent a gift' : 'Event received'); div.querySelector('.reply').textContent = e.replyText ? `AI host: ${e.replyText}` : ''; $('eventList').prepend(div); } while ($('eventList').children.length > 50) $('eventList').lastElementChild.remove(); }
   async function pollEvents() { try { const d = await api('/api/live/events?after=' + encodeURIComponent(cursor)); if (d.events?.length) { renderEvents(d.events); for (const e of d.events) if (e.replyText) replyCount++; $('replyCount').textContent = replyCount; cursor = new Date(d.events[d.events.length-1].createdAt).toISOString(); } } catch(e) { /* transient while disconnected */ } }
   function startPolling() { if (poller) clearInterval(poller); pollEvents(); poller = setInterval(pollEvents, 2500); }
-  $('refreshBtn').onclick = () => { pollEvents(); refreshStatus(); loadKnowledge(); };
+  $('refreshBtn').onclick = () => { pollEvents(); refreshStatus(); loadKnowledge(); loadViewers(); };
+  async function loadViewers() {
+    try {
+      const d = await api('/api/live/viewers?limit=30');
+      const list = $('viewerList'); list.replaceChildren();
+      if (!d.viewers?.length) { list.innerHTML = '<div class="empty">No viewer memories yet. They appear after the host receives viewer events.</div>'; return; }
+      for (const viewer of d.viewers) {
+        const card = document.createElement('article'); card.className = 'event';
+        const details = document.createElement('div');
+        const title = document.createElement('strong'); title.textContent = '@' + (viewer.username || 'viewer');
+        const meta = document.createElement('p'); meta.className = 'source-text';
+        meta.textContent = `Last seen: ${viewer.lastSeenAt ? new Date(viewer.lastSeenAt).toLocaleString() : 'unknown'} · Last event: ${viewer.lastEventType || 'unknown'}`;
+        details.append(title, meta);
+        for (const msg of (viewer.recentConversation || [])) {
+          const line = document.createElement('p'); line.className = msg.role === 'assistant' ? 'reply' : 'source-text';
+          line.textContent = `${msg.role === 'assistant' ? 'AI host' : 'Viewer'}: ${msg.content}`;
+          details.append(line);
+        }
+        card.append(details); list.append(card);
+      }
+    } catch(e) { if (apiBase && token) message(e.message, true); }
+  }
+  $('refreshViewersBtn')?.addEventListener('click', loadViewers);
   async function loadKnowledge() { try { const d = await api('/api/live/knowledge'); $('knowledgeCount').textContent = d.items.length; $('knowledgeList').replaceChildren(); if (!d.items.length) { $('knowledgeList').innerHTML = '<p class="muted">No knowledge notes added yet.</p>'; return; } for (const item of d.items) { const row = document.createElement('div'); row.className='knowledge-item'; const body=document.createElement('div'), title=document.createElement('strong'), content=document.createElement('p'), del=document.createElement('button'); title.textContent=item.title; content.textContent=item.content; del.textContent='Delete'; del.onclick=async()=>{try{await api('/api/live/knowledge/'+item._id,{method:'DELETE'});loadKnowledge();}catch(e){message(e.message,true)}}; body.append(title,content); row.append(body,del); $('knowledgeList').append(row); } } catch(e) { if (apiBase && token) message(e.message, true); } }
   $('knowledgeForm').onsubmit = async e => { e.preventDefault(); try { await api('/api/live/knowledge',{method:'POST',body:JSON.stringify({title:$('knowledgeTitle').value.trim(),content:$('knowledgeContent').value.trim()})}); $('knowledgeTitle').value='';$('knowledgeContent').value='';message('Knowledge note saved.');loadKnowledge(); } catch(err) { message(err.message,true); } };
   $('captureStart').onclick = async () => { try { if (!navigator.mediaDevices?.getDisplayMedia) throw new Error('Screen capture is not supported by this browser.'); mediaStream = await navigator.mediaDevices.getDisplayMedia({video:{frameRate:2},audio:false}); const video=$('preview'); video.srcObject=mediaStream; video.hidden=false; await video.play(); $('captureState').textContent='Screen capture is running'; $('captureStart').disabled=true; $('captureStop').disabled=false; mediaStream.getVideoTracks()[0].addEventListener('ended', stopCapture); captureTimer=setInterval(captureFrame,12000); await captureFrame(); message('Screen fallback started. Keep the TikTok LIVE Studio window visible in the shared capture.'); } catch(e) { message(e.message,true); stopCapture(); } };
   async function captureFrame() { try { const video=$('preview'); if (!mediaStream || !video.videoWidth) return; const canvas=document.createElement('canvas'); const scale=Math.min(1,1000/video.videoWidth); canvas.width=Math.round(video.videoWidth*scale);canvas.height=Math.round(video.videoHeight*scale);canvas.getContext('2d').drawImage(video,0,0,canvas.width,canvas.height); await api('/api/live/screen-observation',{method:'POST',body:JSON.stringify({image:canvas.toDataURL('image/jpeg',0.65)})}); } catch(e) { message(`Screen fallback: ${e.message}`,true); } }
   function stopCapture() { if (captureTimer) clearInterval(captureTimer);captureTimer=null;if(mediaStream) mediaStream.getTracks().forEach(t=>t.stop());mediaStream=null;$('preview').srcObject=null;$('preview').hidden=true;$('captureState').textContent='Screen capture is off';$('captureStart').disabled=false;$('captureStop').disabled=true; }
   $('captureStop').onclick=stopCapture; window.addEventListener('beforeunload',stopCapture);
-  if (apiBase && token) { refreshStatus(); loadKnowledge(); startPolling(); }
+  if (apiBase && token) { refreshStatus(); loadKnowledge(); loadViewers(); startPolling(); }
 })();

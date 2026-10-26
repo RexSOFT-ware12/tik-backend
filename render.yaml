@@ -20,5 +20,9 @@ services:
         sync: false
       - key: OPENAI_API_KEY
         sync: false
+      - key: LIVE_HOST_NAME
+        value: "[HOST_NAME]"
+      - key: LIVE_BRAND_NAME
+        value: "[BRAND_NAME]"
       - key: MONGODB_URI
         sync: false
