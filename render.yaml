@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: tik-live-ai-backend
+    runtime: node
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PERXONA_API_BASE_URL
+        value: https://console.perxona.ai/asia
+      - key: PERXONA_CONNECT_SECRET_KEY
+        sync: false
+      - key: PERXONA_CONNECT_PUBLISHABLE_KEY
+        sync: false
+      - key: LIVE_ADMIN_TOKEN
+        generateValue: true
+      - key: FRONTEND_ORIGINS
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: MONGODB_URI
+        sync: false

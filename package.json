@@ -1,0 +1,22 @@
+{
+  "name": "tiktok-live-ai-backend",
+  "version": "0.1.0",
+  "description": "TikTok LIVE AI host backend with MongoDB, OpenAI and screen-capture fallback",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.9"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server.mjs",
+    "dev": "node --env-file=.env --watch server.mjs"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "mongoose": "^8.19.1",
+    "tiktok-live-connector": "^2.5.0"
+  },
+  "devDependencies": {
+    "@perxona/presenter-types": "latest"
+  }
+}
