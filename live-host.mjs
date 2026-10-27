@@ -316,7 +316,7 @@ Output only the words the avatar should speak. No reasoning, labels or markdown.
       viewer.lastConversationAt = new Date();
       await viewer.save().catch(e => console.error('Could not save viewer conversation:', e.message));
     }
-    if (replyText) engine.noteSpoken();
+    if (replyText) engine.noteSpoken(replyText);
     await LiveEvent.create({ eventId: signature, type: evType, username, userId, text, giftName, replyText, reactionType: reactionType || classifyReaction(evType, text), status: 'new',
       priority, segment: engine.currentSegmentLabel(), overlay, diamonds, repeatCount, tier, simulated }).catch(e => { if (e.code !== 11000) console.error('Could not save live event:', e.message); });
   }
@@ -342,11 +342,35 @@ Output only the words the avatar should speak. No reasoning, labels or markdown.
     } catch (e) { connected = false; lastError = e.message; res.status(502).json({ error: `Could not connect to @${username}. Confirm the account is LIVE and try again. ${e.message}` }); }
   });
   app.post('/api/live/disconnect', requireAdmin, async (_req, res) => { if (connection) { try { await connection.disconnect(); } catch {} } connection = null; connected = false; engine.stopSession(); res.json({ ok: true }); });
-  app.get('/api/live/events', requireAdmin, async (req, res) => {
-    const after = req.query.after ? new Date(req.query.after) : new Date(Date.now() - 10 * 60 * 1000);
+  const intOf = (v, lo, hi, d) => { const n = Number.parseInt(v, 10); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : d; };
+  const wrap = (fn) => async (req, res) => { try { await fn(req, res); } catch (e) { console.error('Live route failed:', e.message); res.status(500).json({ error: e.message || 'Request failed.' }); } };
+
+  // Only ONE Avatar Studio window may speak at a time. A window that sends ?client=<id> asks for the "speaker lease";
+  // it is held while that window keeps polling. Other windows get no lines (they stay silent) instead of reading
+  // every line twice. Pages that just display activity send no client id and always see the events.
+  const SPEAKER_LEASE_MS = 12000;
+  let speaker = { id: '', at: 0, delivered: 0 };
+  const studioConnected = () => Boolean(speaker.id) && Date.now() - speaker.at < SPEAKER_LEASE_MS;
+
+  app.get('/api/live/events', requireAdmin, wrap(async (req, res) => {
+    const now = Date.now(), client = textOf(req.query.client).slice(0, 64);
+    let after = new Date(req.query.after || now - 10 * 60 * 1000);
+    if (Number.isNaN(after.getTime())) after = new Date(now - 10 * 60 * 1000);
+    if (client) {
+      const free = !speaker.id || now - speaker.at > SPEAKER_LEASE_MS || speaker.id === client;
+      if (!free) return res.json({ events: [], latest: after, speaker: false });
+      if (speaker.id !== client) { // takeover: do not re-read lines the previous window already spoke, and never read old ones
+        after = new Date(Math.max(after.getTime(), speaker.delivered || 0, now - 90_000));
+        speaker = { id: client, at: now, delivered: speaker.delivered };
+      }
+      speaker.at = now;
+      engine.setSpeechState({ speaking: req.query.speaking === '1', queued: intOf(req.query.queued, 0, 999, 0) });
+      after = new Date(Math.max(after.getTime(), now - 90_000));
+    }
     const events = await LiveEvent.find({ createdAt: { $gt: after } }).sort({ createdAt: 1 }).limit(100).lean();
-    res.json({ events, latest: events.at(-1)?.createdAt || after });
-  });
+    if (client && events.length) speaker.delivered = Math.max(speaker.delivered || 0, new Date(events.at(-1).createdAt).getTime());
+    res.json({ events, latest: events.at(-1)?.createdAt || after, speaker: true });
+  }));
   app.get('/api/live/viewers', requireAdmin, async (req, res) => {
     const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit || '30', 10) || 30));
     const viewers = await ViewerMemory.find().sort({ lastSeenAt: -1 }).limit(limit).lean();
@@ -384,8 +408,6 @@ Output only the words the avatar should speak. No reasoning, labels or markdown.
     } catch (e) { lastError = e.message; res.status(502).json({ error: `Screen analysis failed: ${e.message}` }); }
   });
   // ── Engagement routes: overlay, config, goals, session, games, leaderboard, analytics, simulator ──
-  const intOf = (v, lo, hi, d) => { const n = Number.parseInt(v, 10); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : d; };
-  const wrap = (fn) => async (req, res) => { try { await fn(req, res); } catch (e) { console.error('Live route failed:', e.message); res.status(500).json({ error: e.message || 'Request failed.' }); } };
 
   app.get('/api/live/overlay', requireAdmin, (_req, res) => res.json({ ...engine.overlayState(), live: { connected, username: liveUsername } }));
   app.get('/api/live/config', requireAdmin, (_req, res) => res.json({ ...engine.getConfig(), gameTypes: GAME_TYPES }));
@@ -399,7 +421,7 @@ Output only the words the avatar should speak. No reasoning, labels or markdown.
   app.delete('/api/live/goals/:id', requireAdmin, (req, res) => (engine.deleteGoal(req.params.id) ? res.sendStatus(204) : res.status(404).json({ error: 'Goal not found.' })));
   app.post('/api/live/goals/:id/reset', requireAdmin, (req, res) => { const g = engine.resetGoal(req.params.id); return g ? res.json(g) : res.status(404).json({ error: 'Goal not found.' }); });
 
-  app.get('/api/live/session', requireAdmin, (_req, res) => res.json({ ...engine.sessionInfo(), next: engine.nextSegment(), connected, username: liveUsername }));
+  app.get('/api/live/session', requireAdmin, (_req, res) => res.json({ ...engine.sessionInfo(), next: engine.nextSegment(), connected, username: liveUsername, studio: studioConnected() }));
   app.post('/api/live/session/start', requireAdmin, (req, res) => res.json(engine.startSession({ resetGoals: Boolean(req.body?.resetGoals) })));
   app.post('/api/live/session/stop', requireAdmin, (_req, res) => res.json(engine.stopSession()));
 

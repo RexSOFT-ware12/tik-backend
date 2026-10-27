@@ -230,6 +230,7 @@ export function createEngine(deps = {}) {
     viewers: { count: 0, peak: 0 },
     used: { trivia: new Set(), riddle: new Set() },
     ticking: false, saveTimer: null,
+    speech: { speaking: false, queued: 0, at: 0 }, busyUntil: 0, lastEmitAt: 0, starting: false,
   };
 
   // ── config ──
@@ -270,7 +271,23 @@ export function createEngine(deps = {}) {
   function stopSession() { st.session.active = false; st.session.endedAt = now(); st.game = null; return { ...st.session }; }
   const sessionInfo = () => ({ ...st.session, elapsedSeconds: st.session.active ? Math.floor((now() - st.session.startedAt) / 1000) : 0 });
   function setViewerCount(n) { n = Number(n); if (!Number.isFinite(n) || n < 0) return; st.viewers.count = n; st.viewers.peak = Math.max(st.viewers.peak, n); }
-  const noteSpoken = () => { st.lastSpoken = now(); };
+  /** Rough speaking time, so the host never stacks new filler lines on top of lines still being read. */
+  const estimateSpeechMs = (text) => 1500 + Math.round((String(text || '').trim().split(/\s+/).filter(Boolean).length / 2.4) * 1000);
+  function markSpoken(text) {
+    const t = now();
+    st.lastSpoken = t; st.lastEmitAt = t;
+    st.busyUntil = Math.min(Math.max(st.busyUntil, t) + estimateSpeechMs(text), t + 45000);
+  }
+  const noteSpoken = (text) => markSpoken(text);
+  /** Avatar Studio reports whether it is speaking and how many lines are waiting (sent with every poll). */
+  function setSpeechState({ speaking = false, queued = 0 } = {}) { st.speech = { speaking: Boolean(speaking), queued: Math.max(0, Number(queued) || 0), at: now() }; }
+  /** True while the avatar is (or is about to be) talking. Uses the Studio's report when fresh, an estimate otherwise. */
+  function isBusy() {
+    const t = now(), fresh = t - st.speech.at < 8000;
+    if (fresh && (st.speech.speaking || st.speech.queued > 0)) return true;
+    if (fresh && t - st.lastEmitAt > 6000) st.busyUntil = 0; // Studio has had time to pick the lines up and says it is idle
+    return t < st.busyUntil;
+  }
 
   // ── speech helpers ──
   const say = async (prompt, fallback, opts) => {
@@ -283,7 +300,7 @@ export function createEngine(deps = {}) {
     return 'free chat';
   }
   async function speak(ev) {
-    st.lastSpoken = now();
+    markSpoken(ev.replyText);
     try { await deps.emit({ segment: currentSegmentLabel(), ...ev }); } catch (e) { log.warn?.('emit failed:', e.message); }
   }
 
@@ -414,10 +431,12 @@ export function createEngine(deps = {}) {
 
   async function startGame(type, opts = {}) {
     if (!GAME_TYPES.includes(type)) return { ok: false, error: 'Unknown game type.' };
-    if (st.game && !st.game.ended) return { ok: false, error: 'A game is already running. Stop it first.' };
+    if ((st.game && !st.game.ended) || st.starting) return { ok: false, error: 'A game is already running. Stop it first.' };
+    st.starting = true;
     const t = now(), secs = cfg.games.answerSeconds;
-    const g = { id: uid(), type, startedAt: t, ended: false, attempts: 0, topic: str(opts.topic, 80), by: opts.by || 'admin', hintGiven: false };
-    let intro;
+    let g, intro;
+    try {
+    g = { id: uid(), type, startedAt: t, ended: false, attempts: 0, topic: str(opts.topic, 80), by: opts.by || 'admin', hintGiven: false };
     if (type === 'trivia' || type === 'riddle') {
       Object.assign(g, await makeQA(type, g.topic), { points: type === 'trivia' ? 100 : 150, endsAt: t + secs * 1000, hintAt: t + secs * 550 });
       intro = `${type === 'trivia' ? 'Trivia time!' : 'Riddle time!'} ${g.question} Type your answer in the chat!`;
@@ -430,7 +449,11 @@ export function createEngine(deps = {}) {
       g.max = cfg.games.wordChainMaxWords; g.points = 10; g.chainSeconds = 40; g.endsAt = t + g.chainSeconds * 1000;
       intro = `Word chain! I'll start with "${g.current}". Reply with a word that starts with the letter "${g.nextLetter.toUpperCase()}"! Each new word scores points.`;
     }
+    // The question may have taken a few seconds to write: start the clock now, not when the request began.
+    const shift = now() - t;
+    if (shift > 0) for (const k of ['startedAt', 'endsAt', 'hintAt', 'lastHintAt']) if (g[k]) g[k] += shift;
     st.game = g; st.lastGameAt = t;
+    } finally { st.starting = false; }
     await speak({ type: 'game_start', username: 'Host', text: GAME_TITLES[type], replyText: intro, reactionType: 'thinking', priority: 80, segment: `game:${type}` });
     return { ok: true, game: gameAdmin() };
   }
@@ -575,19 +598,25 @@ export function createEngine(deps = {}) {
     for (const seg of c.segments) {
       if (st.clockFired.has(seg.id)) continue;
       if (seg.atMinute > elapsedMin) break;
-      if (GAME_TYPES.includes(seg.kind) && st.game) { if (elapsedMin - seg.atMinute > 4) st.clockFired.add(seg.id); continue; }
+      const late = elapsedMin - seg.atMinute;
+      // Never talk over a running game; give up on filler segments that are far too late.
+      if (st.game || st.starting) { if (late > 4 && seg.kind !== 'finale') st.clockFired.add(seg.id); return; }
+      // Give the avatar a moment to finish what it is saying (up to a minute), then go ahead.
+      if (isBusy() && late < 1) return;
       st.clockFired.add(seg.id);
       await runSegment(seg);
       return;
     }
     const every = c.teaserEveryMinutes * MIN;
-    if (every > 0 && !st.game && t - st.lastTeaserAt >= every && t - st.lastSpoken > 6000) {
+    if (every > 0 && !st.game && !st.starting && !isBusy() && t - st.lastTeaserAt >= every && t - st.lastSpoken > 6000) {
       const next = nextSegment(t);
       if (next && next.inSeconds <= 12 * 60) {
         st.lastTeaserAt = t;
         const mins = Math.max(1, Math.round(next.inSeconds / 60));
         const fb = `In about ${mins} minute${mins > 1 ? 's' : ''}: ${next.title}! Stay with me, you won't want to miss it!`;
+        const stamp = st.lastSpoken;
         const text = await say(`Tease what's coming in about ${mins} minute(s): "${next.title}". One or two excited sentences that make viewers want to stay. ${c.teaserText}`, fb, { kind: 'teaser', maxTokens: 100 });
+        if (st.lastSpoken !== stamp || st.game || st.starting) return; // something else was said while this was being written
         await speak({ type: 'teaser', username: 'Host', text: next.title, replyText: text, reactionType: 'surprise', priority: 40 });
       }
     }
@@ -619,13 +648,15 @@ export function createEngine(deps = {}) {
   }
 
   async function idleTick(t) {
-    const c = cfg.idle; if (!c.enabled || st.game) return;
+    const c = cfg.idle; if (!c.enabled || st.game || st.starting || isBusy()) return;
     const gap = c.seconds * 1000;
     if (t - st.lastSpoken < gap || t - st.lastIdleAt < gap) return;
     st.lastIdleAt = t;
+    const stamp = st.lastSpoken;
     for (let i = 0; i < c.types.length; i++) {
       const type = c.types[st.idleIdx++ % c.types.length];
       const item = await buildIdle(type);
+      if (st.lastSpoken !== stamp || st.game || st.starting) return; // chat, a gift or a game spoke while this line was being written: drop it
       if (item?.text) { await speak({ type: 'idle', username: 'Host', text: type, replyText: item.text, reactionType: item.reaction, priority: 5 }); return; }
     }
   }
@@ -669,7 +700,7 @@ export function createEngine(deps = {}) {
 
   return {
     getConfig, loadConfig, updateConfig, upsertGoal, deleteGoal, resetGoal,
-    startSession, stopSession, sessionInfo, setViewerCount, noteSpoken,
+    startSession, stopSession, sessionInfo, setViewerCount, noteSpoken, setSpeechState, isBusy,
     pushGift, registerGift, afterGift, perkFor,
     startGame, endGame, handleChat, gameAdmin,
     tick, overlayState, leaderboards, nextSegment, currentSegmentLabel,

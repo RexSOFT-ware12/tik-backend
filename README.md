@@ -80,6 +80,14 @@ All of these routes need `X-Admin-Token`. The logic lives in `live-engage.mjs` (
 
 The host only thanks and rewards. Its prompts forbid asking viewers to send gifts.
 
+### Speech safety (nothing talks over anything)
+
+- The server knows what the avatar is doing: Avatar Studio reports "speaking" and "lines waiting" with every poll. Idle chatter, teasers and show-clock announcements only start when the avatar is quiet. Without a Studio report, the server estimates speaking time from the text length.
+- A filler line that was being written while chat, a gift or a game spoke is discarded instead of being read late.
+- Only one game can start at a time (a scheduled game and an admin-started game can no longer collide), announcements wait for a running game to finish, and the answer timer starts after the question is ready.
+- `GET /api/live/events?client=<id>` grants a speaker lease to one Avatar Studio window; other windows receive no lines. Pages that only display activity send no `client` and always see events.
+- `GET /api/live/session` includes `studio: true|false`, so the Show clock page can warn you when no Studio window is open.
+
 ### Routes
 
 - `GET /api/live/overlay` live HUD state (goals, crown, leaderboards, running game, next segment, combos, viewer count)

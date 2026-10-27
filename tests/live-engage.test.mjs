@@ -131,4 +131,32 @@ assert.equal(an.totals.gamesStarted, 1); assert.equal(an.totals.gameWins, 1); as
 assert.equal(an.peak.viewers, 20); assert.equal(an.avgViewers, 13); assert.equal(an.topGifters[0].username, 'c'); assert.equal(an.topChatters[0].comments, 2);
 const tr = an.segments.find(x => x.name === 'game:trivia'); assert.equal(tr.avgViewers, 15); assert.ok(tr.viewersVsAvg > 0);
 assert.ok(an.timeline.length >= 15 && an.timeline[0].viewers === 15);
-console.log('analytics ok'); console.log('ALL TESTS PASSED (incl. analytics)');
+console.log('analytics ok');
+
+// ── conflict protection ──
+events.length = 0; e = mk({ initialConfig: { idle: { seconds: 20 } } }); e.startSession();
+// 1) the avatar still talking (reported by Studio) blocks filler
+t += 30000; e.setSpeechState({ speaking: true, queued: 0 }); await e.tick(); assert.equal(events.length, 0, 'no idle while avatar speaks');
+t += 30000; e.setSpeechState({ speaking: false, queued: 2 }); await e.tick(); assert.equal(events.length, 0, 'no idle while lines are queued');
+e.setSpeechState({ speaking: false, queued: 0 }); await e.tick(); assert.equal(last().type, 'idle', 'idle once Studio reports quiet');
+// 2) without a Studio report, a long line keeps filler away by estimate
+events.length = 0; e = mk({ initialConfig: { idle: { seconds: 20 } } }); e.startSession(); t += 25000;
+e.noteSpoken('word '.repeat(60)); t += 21000; await e.tick(); assert.equal(events.length, 0, 'estimate: still speaking a 60-word line');
+t += 30000; await e.tick(); assert.equal(last().type, 'idle');
+// 3) two games cannot start at once (scheduled + admin at the same moment)
+e = mk({ genJson: async () => { await new Promise(r => setTimeout(r, 30)); return null; } }); events.length = 0;
+const [r1, r2] = await Promise.all([e.startGame('trivia'), e.startGame('riddle')]);
+assert.equal([r1.ok, r2.ok].filter(Boolean).length, 1, 'only one game starts'); assert.equal(events.filter(x => x.type === 'game_start').length, 1);
+// 4) idle line written while a game starts is discarded
+events.length = 0; let release; const gate = new Promise(r => (release = r));
+e = mk({ initialConfig: { idle: { seconds: 20 } }, say: async (p, fb) => { await gate; return fb; } }); e.startSession(); t += 25000;
+const pending = e.tick(); await new Promise(r => setTimeout(r, 5)); await e.startGame('trivia'); release(); await pending;
+assert.ok(!events.some(x => x.type === 'idle'), 'stale idle dropped'); assert.equal(events.filter(x => x.type === 'game_start').length, 1);
+// 5) finale/announce segments wait for a running game, never speak over it
+events.length = 0; e = mk({ initialConfig: { showClock: { teaserEveryMinutes: 0, segments: [{ id: 'a', atMinute: 1, kind: 'trivia', title: 'T' }, { id: 'b', atMinute: 1, kind: 'announce', title: 'Hello all', text: 'Announcement!' }] } } }); e.startSession();
+t += 61000; await e.tick(); assert.equal(last().type, 'game_start'); t += 5000; await e.tick(); assert.ok(!events.some(x => x.text === 'Hello all'), 'announce waits during game');
+await e.endGame('manual'); t += 5000; e.setSpeechState({ speaking: false, queued: 0 }); t += 7000; e.setSpeechState({ speaking: false, queued: 0 }); await e.tick(); assert.ok(events.some(x => x.text === 'Hello all'), 'announce runs after the game');
+// 6) the game clock starts when the question is ready, not before
+e = mk({ genJson: async () => { t += 8000; return { question: 'What is two plus two exactly?', answer: 'four' }; } }); await e.startGame('trivia');
+assert.ok(e.gameAdmin().secondsLeft >= 44, 'full answer window after slow LLM: ' + e.gameAdmin().secondsLeft);
+console.log('conflict protection ok'); console.log('ALL TESTS PASSED');
