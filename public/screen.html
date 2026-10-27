@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Screen Capture Setup — LIVE Host AI</title><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;800&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet"><link rel="stylesheet" href="live.css"></head>
+<body><div class="shell"><aside class="sidebar"><div class="brandmark">LIVE<span>AI</span></div><p class="muted">TikTok LIVE host</p><nav><a href="index.html">Overview</a><a href="activity.html">Live activity</a><a href="knowledge.html">Knowledge base</a><a href="viewers.html">Viewer memory</a><a href="show.html">Show clock</a><a href="games.html">Games</a><a href="goals.html">Gift goals</a><a href="analytics.html">Analytics</a><a class="active" aria-current="page" href="screen.html">Screen Capture Setup</a><a href="/demos/studio/" target="_blank" rel="noreferrer">Avatar Studio ↗</a></nav><div class="side-note">Local OCR<span>Desktop capture → Groq text → avatar</span></div></aside>
+<main><header><div><p class="eyebrow">LIVE Host AI</p><h1>Standalone Screen Capture</h1><p class="muted">The browser no longer captures screenshots. Use the Windows ScreenCapture app to OCR TikTok LIVE Studio locally and send only text to your backend.</p></div><div class="pill on">Local OCR + webhook</div></header>
+<section class="card"><h2>1. Configure the webhook</h2><p class="muted">Set <code>SCREEN_CAPTURE_WEBHOOK_TOKEN</code> in your Render backend environment to a long random secret. Paste the same secret below; it is used only to build the desktop app's webhook URL.</p><label for="backendUrl">Backend URL</label><input id="backendUrl" value="https://tik-backend.onrender.com" autocomplete="url"><label for="webhookToken">Screen capture webhook token</label><input id="webhookToken" type="password" placeholder="Paste SCREEN_CAPTURE_WEBHOOK_TOKEN"><p class="muted">Webhook URL for the ScreenCapture app</p><textarea id="webhookUrl" rows="3" readonly placeholder="The URL appears here after you enter the token"></textarea><button id="makeUrl" type="button">Generate webhook URL</button> <button id="copyUrl" class="secondary" type="button">Copy URL</button><p id="setupNotice" class="notice" role="status"></p></section>
+<section class="card"><h2>2. Configure ScreenCapture on Windows</h2><ol><li>Extract <code>ScreenCapture.zip</code> and start <code>live_ocr.py</code> following its README.</li><li>Select the TikTok LIVE Studio window and draw a small region around the chat messages and a separate region for gift/follow/join alerts if needed.</li><li>Open <strong>Outputs...</strong> and enable the webhook sink.</li><li>Paste the generated webhook URL. Enable the JSONL file sink as a backup.</li><li>Set the capture interval to about 1 second and turn on <strong>New lines only</strong>.</li><li>Click <strong>Test</strong>, then <strong>Start</strong>. Check this dashboard's Live activity page and keep Avatar Studio open.</li></ol><p class="muted">ScreenCapture extracts text on your PC. The backend sends that text to the Groq text model (<code>openai/gpt-oss-20b</code>) to select relevant viewer interactions. No image is sent to Groq or OpenAI for vision analysis.</p></section>
+<section class="card"><h2>3. Keep normal viewer interactions enabled</h2><p>Direct TikTok chat, joins, follows, and gifts continue through the existing event listener. Screen OCR is an additional input only; both inputs feed the same priority queue so the avatar can speak without overlapping lines.</p><p class="muted">For security, never use your admin token as the screen-capture token. Keep <code>SCREEN_CAPTURE_WEBHOOK_TOKEN</code> secret.</p></section><footer>Backend: https://tik-backend.onrender.com · OCR runs locally on your Windows PC.</footer></main></div>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const make = () => {
+    const base = $('backendUrl').value.trim().replace(/\/+$/, '');
+    const token = $('webhookToken').value.trim();
+    if (!/^https:\/\//i.test(base)) { $('setupNotice').textContent = 'Enter a valid HTTPS backend URL.'; return; }
+    if (token.length < 24) { $('setupNotice').textContent = 'Use the long random SCREEN_CAPTURE_WEBHOOK_TOKEN from Render (at least 24 characters).'; return; }
+    $('webhookUrl').value = base + '/api/live/screen-text?token=' + encodeURIComponent(token);
+    $('setupNotice').textContent = 'Webhook URL generated. Paste it into ScreenCapture → Outputs → Webhook.';
+  };
+  $('makeUrl').addEventListener('click', make);
+  $('copyUrl').addEventListener('click', async () => {
+    if (!$('webhookUrl').value) make();
+    if (!$('webhookUrl').value) return;
+    try { await navigator.clipboard.writeText($('webhookUrl').value); $('setupNotice').textContent = 'Webhook URL copied.'; }
+    catch { $('setupNotice').textContent = 'Select the URL field and copy it manually.'; }
+  });
+})();
+</script></body></html>

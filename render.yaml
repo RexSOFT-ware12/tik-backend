@@ -26,16 +26,12 @@ services:
         value: groq
       - key: GROQ_TEXT_MODEL
         value: openai/gpt-oss-20b
-      - key: GROQ_VISION_MODEL
-        value: qwen/qwen3.8-27b
-      - key: GROQ_BASE_URL
-        value: https://api.groq.com/openai/v1
+      - key: SCREEN_CAPTURE_WEBHOOK_TOKEN
+        generateValue: true
+      - key: SCREEN_CAPTURE_LLM_TIMEOUT_MS
+        value: "12000"
       - key: OPENAI_API_KEY
         sync: false
-      - key: OPENAI_VISION_MODEL
-        value: gpt-4o-mini
-      - key: OPENAI_VISION_BASE_URL
-        value: https://api.openai.com/v1/chat/completions
       - key: LIVE_HOST_NAME
         value: "[HOST_NAME]"
       - key: LIVE_BRAND_NAME

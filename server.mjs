@@ -572,6 +572,8 @@ app.use(express.json({ limit: "6mb" }));
 // Protect the existing Connect proxy as well as the new live controls. The
 // dashboard sends this token from browser local storage; never use a short or shared default.
 app.use("/api", (req, res, next) => {
+  // The standalone OCR app authenticates with SCREEN_CAPTURE_WEBHOOK_TOKEN, not the admin token.
+  if (req.path === "/live/screen-text") return next();
   const expected = process.env.LIVE_ADMIN_TOKEN || "";
   if (!expected) return res.status(503).json({ error: "Set LIVE_ADMIN_TOKEN in the backend environment." });
   const supplied = req.get("X-Admin-Token") || req.get("Authorization")?.replace(/^Bearer\s+/i, "");
