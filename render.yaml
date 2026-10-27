@@ -23,7 +23,7 @@ services:
       - key: GROQ_API_KEY
         sync: false
       - key: GROQ_MODEL
-        value: llama-3.3-70b-versatile
+        value: llama-3.1-8b-instant
       - key: LIVE_HOST_NAME
         value: "[HOST_NAME]"
       - key: LIVE_BRAND_NAME

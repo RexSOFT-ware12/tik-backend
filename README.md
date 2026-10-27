@@ -53,12 +53,58 @@ The frontend stores the backend URL and admin token in that browser's local stor
 - `POST /api/live/connect` `{ "username": "creator" }`
 - `POST /api/live/disconnect`
 - `GET /api/live/events?after=<ISO timestamp>`
-- `GET /api/live/viewers?limit=30` (authenticated viewer-memory list)\n- `GET /api/live/knowledge`
+- `GET /api/live/viewers?limit=30` (authenticated viewer-memory list)
+- `GET /api/live/knowledge`
 - `POST /api/live/knowledge` `{ "title": "...", "content": "..." }`
 - `DELETE /api/live/knowledge/:id`
 - `POST /api/live/screen-observation` `{ "image": "data:image/jpeg;base64,..." }`
 
 Live control routes require `X-Admin-Token` matching `LIVE_ADMIN_TOKEN`.
+
+## Engagement features (keep viewers watching, thank gifters)
+
+All of these routes need `X-Admin-Token`. The logic lives in `live-engage.mjs` (no dependencies, unit-testable); `live-host.mjs` wires it to MongoDB, the LLM and the TikTok connector.
+
+| Feature | What it does |
+| --- | --- |
+| Regulars and streaks | Counts one visit per calendar day, keeps a day streak, and gives badges: Newcomer, Regular (3+ visits or 3-day streak), Super Fan (10+ visits, 7-day streak or 500+ diamonds). The host mentions streaks when someone joins. |
+| Chat games | `trivia`, `riddle`, `guess_number`, `word_chain`. Viewers answer in chat; the first correct answer wins points (speed bonus). Game answers do not get normal AI chat replies, so the host does not spam. Trivia and riddles are written by the AI (with a built-in bank as fallback). |
+| Show clock | Timed segments (games, announcements, leaderboard, finale) plus teasers such as "in 3 minutes: Guess the number". Runs while a show is running (starts automatically when you connect). |
+| Idle engagement | After N quiet seconds the host asks a question, tells a joke, shouts out a regular, mentions goal progress or the crown holder, or teases the next segment. |
+| Languages | The host replies in the language of each comment, limited to a list you control. Use a voice in Avatar Studio that speaks those languages. |
+| Gift tiers and combos | Gift streaks are merged into ONE reaction at the end (x20 Rose is one thank-you, not twenty). Tier comes from the real diamond value; bigger tiers get longer reactions, a bigger motion and a bigger on-screen moment. |
+| Gift goals | Progress bar plus a reward the host performs when the goal is reached. Goals can count gifts or diamonds, one gift type or any, and can repeat. |
+| Crown | The top gifter of the show wears the crown; the host announces changes. |
+| Gifter perks | A gifter's comments are spoken first and get a fuller answer for a few minutes. `!pick <request>` lets them choose a joke, shout-out or topic (one per qualifying gift). |
+| Overlay + analytics | `GET /api/live/overlay` feeds the HUD in Avatar Studio. `GET /api/live/analytics` shows viewers over time, activity, and which segment keeps people watching. |
+
+The host only thanks and rewards. Its prompts forbid asking viewers to send gifts.
+
+### Routes
+
+- `GET /api/live/overlay` live HUD state (goals, crown, leaderboards, running game, next segment, combos, viewer count)
+- `GET|PUT /api/live/config` tiers, gifter perks, crown, show clock, idle, games, languages
+- `POST /api/live/goals`, `PUT|DELETE /api/live/goals/:id`, `POST /api/live/goals/:id/reset`
+- `GET /api/live/session`, `POST /api/live/session/start` `{ "resetGoals": false }`, `POST /api/live/session/stop`
+- `GET /api/live/games`, `POST /api/live/games/start` `{ "type": "trivia", "topic": "space" }`, `POST /api/live/games/stop`
+- `GET /api/live/leaderboard` this show and all time
+- `GET /api/live/analytics?hours=6` or `?scope=session`
+- `POST /api/live/simulate` `{ "kind": "gift|chat|join|follow", ... }` test without TikTok; excluded from analytics
+
+### New environment variable
+
+- `LIVE_TIMEZONE` (optional, default `UTC`), for example `Africa/Accra`. Decides where "a new day" starts for visit streaks.
+
+### Tests
+
+Run `node tests/live-engage.test.mjs` to check games, gift tiers, combos, goals, crown, perks, show clock, idle chatter and analytics (no database or network needed).
+
+### Notes
+
+- Goal progress and settings are saved in MongoDB (collection `liveconfigs`), so a restart does not lose them.
+- Viewer count samples are stored every 30 seconds while a show runs (collection `livesamples`) for the analytics charts.
+- Word chain checks the starting letter, repeats and obvious nonsense; it has no dictionary.
+- The `public/` folder still holds the older bundled dashboard. The new pages (show clock, games, gift goals, analytics) and the HUD are in the separate frontend project.
 
 ## Host personality and returning-viewer memory
 
