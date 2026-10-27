@@ -16,6 +16,8 @@ services:
         sync: false
       - key: LIVE_ADMIN_TOKEN
         generateValue: true
+      - key: EULER_API_KEY
+        sync: false
       - key: FRONTEND_ORIGINS
         sync: false
       - key: GROQ_API_KEY
