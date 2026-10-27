@@ -3,8 +3,8 @@
 This build keeps the existing Perxona `sv-presenter` avatar integration and adds a hybrid TikTok LIVE workflow:
 
 - **Primary input:** the backend listens to public TikTok LIVE chat, member/join and gift events with `tiktok-live-connector`.
-- **Fallback input:** the browser can share a TikTok LIVE Studio window and periodically send reduced-resolution screenshots to the backend for OpenAI vision extraction.
-- **AI host:** OpenAI creates short spoken responses; the existing avatar presenter speaks them when Avatar Studio is open and the presenter has been initialized.
+- **Fallback input:** the browser can share a TikTok LIVE Studio window and periodically send reduced-resolution screenshots to the backend for Groq-first vision extraction.
+- **AI host:** Groq (`openai/gpt-oss-20b`) creates short spoken responses, with OpenAI as an optional fallback; the existing avatar presenter speaks them when Avatar Studio is open and the presenter has been initialized.
 - **Knowledge:** custom facts/FAQs are stored in MongoDB through Mongoose and included in AI context.
 - **Hosting:** the Render Blueprint deploys the Node 22.9+ Express service and serves the static dashboard; the frontend can also be hosted separately.
 
@@ -13,7 +13,7 @@ This build keeps the existing Perxona `sv-presenter` avatar integration and adds
 This repository includes a Render Blueprint in `render.yaml`. It deploys the Node service, serves the dashboard from `public/`, and configures a public `/health` liveness endpoint.
 
 1. Push this repository to GitHub, then in Render choose **New + → Blueprint** and select the repository.
-2. Enter the Perxona Connect secret and publishable keys, OpenAI API key, MongoDB Atlas URI, and `FRONTEND_ORIGINS` when prompted. Add a Groq API key to enable fallback when OpenAI is unavailable; Render generates `LIVE_ADMIN_TOKEN`, whose value you can view in the service environment after creation.
+2. Enter the Perxona Connect secret and publishable keys, Groq API key, MongoDB Atlas URI, and `FRONTEND_ORIGINS` when prompted. The defaults use `GROQ_TEXT_MODEL=openai/gpt-oss-20b` for host replies and `GROQ_VISION_MODEL` for screen captures; OpenAI is optional as a fallback; Render generates `LIVE_ADMIN_TOKEN`, whose value you can view in the service environment after creation.
 3. Set `FRONTEND_ORIGINS` to the exact HTTPS origin of the frontend. If using the dashboard served by this same Render service, use the service's `https://<service-name>.onrender.com` URL. For a separately hosted dashboard, use that dashboard's origin instead. Do not use `*` in production.
 4. In MongoDB Atlas, allow network access from the Render service (or use an appropriately secured network policy). Keep all API keys and the MongoDB URI in Render's environment settings, never in source control.
 5. Wait for the Render health check to pass, then open the service URL to use the bundled dashboard.
@@ -40,7 +40,7 @@ The frontend stores the backend URL and admin token in that browser's local stor
 ## 3. Notes and limitations
 
 - `tiktok-live-connector` is an unofficial, reverse-engineered integration, not a TikTok/ByteDance official API. TikTok can change or block the event protocol; the direct listener is not guaranteed to work for every account/region. The account generally needs to be LIVE for connection to succeed.
-- Screen fallback requires a browser that supports `getDisplayMedia()` (use a secure HTTPS origin or localhost) and explicit user permission. Keep the relevant LIVE Studio window visible. Vision calls cost OpenAI usage, so the fallback samples roughly every 12 seconds.
+- Screen fallback requires a browser that supports `getDisplayMedia()` (use a secure HTTPS origin or localhost) and explicit user permission. Keep the relevant LIVE Studio window visible. Host text uses Groq first (`GROQ_TEXT_MODEL=openai/gpt-oss-20b`), and screen capture tries Groq first using `GROQ_VISION_MODEL` (a vision-capable model), then optionally falls back to OpenAI if Groq fails. The fallback samples roughly every 12 seconds.
 - Avatar speech is queued only in an open Avatar Studio tab with a successfully initialized presenter. This build does not automate TikTok Live Studio broadcasting or click the TikTok Go LIVE button.
 - The existing Perxona sample contains other demo-grade routes without per-user authorization. Do not expose the API publicly without adding stronger authentication, rate limits and production review.
 - The frontend is plain HTML/CSS/JS; there is no frontend build step.

@@ -28,10 +28,10 @@ const USE_MOCK = process.env.USE_MOCK === "true";
 const PRESENTER_URL =
   process.env.PRESENTER_URL ||
   "https://cdn.perxona.ai/prod/latest/widget/entry/presenter.js";
-const LLM_PROVIDER = (process.env.LLM_PROVIDER || "openai").toLowerCase();
+const LLM_PROVIDER = (process.env.LLM_PROVIDER || "groq").toLowerCase();
 const LLM_API_KEY =
   process.env.LLM_API_KEY ||
-  (LLM_PROVIDER === "openai" ? process.env.OPENAI_API_KEY : undefined);
+  (LLM_PROVIDER === "openai" ? process.env.OPENAI_API_KEY : LLM_PROVIDER === "groq" ? process.env.GROQ_API_KEY : undefined);
 const PRESENTER_TARGET = {
   avatarId: process.env.DEMO_FIXED_AVATAR_ID,
   sceneId: process.env.DEMO_FIXED_SCENE_ID,
@@ -645,6 +645,8 @@ app.get(
       mock: USE_MOCK,
       chat: Boolean(
         LLM_API_KEY ||
+          (LLM_PROVIDER === "groq" && process.env.GROQ_API_KEY) ||
+          (LLM_PROVIDER === "groq" && process.env.GROQ_API_KEY) ||
           (LLM_PROVIDER === "openai" && process.env.GROQ_API_KEY),
       ),
       presenterUrl: PRESENTER_URL,
@@ -762,17 +764,20 @@ const LLM_DEFAULTS = {
   },
 };
 
+function groqEndpoint(baseUrl = process.env.GROQ_BASE_URL) {
+  const configured = (baseUrl || "https://api.groq.com/openai/v1").replace(/\/+$/, "");
+  return configured.endsWith("/chat/completions") ? configured : `${configured}/chat/completions`;
+}
+
 function groqRequestConfig(messages) {
   return {
-    url:
-      process.env.GROQ_BASE_URL ||
-      "https://api.groq.com/openai/v1/chat/completions",
+    url: groqEndpoint(),
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
     },
     body: {
-      model: process.env.GROQ_MODEL || "llama-3.1-8b-instant",
+      model: process.env.GROQ_TEXT_MODEL || process.env.GROQ_MODEL || "openai/gpt-oss-20b",
       messages,
     },
   };
@@ -850,43 +855,40 @@ async function sendLlmRequest(provider, request) {
 }
 
 async function requestLlmCompletion(messages) {
-  if (LLM_PROVIDER !== "openai" && LLM_PROVIDER !== "anthropic") {
-    throw Object.assign(
-      new Error("LLM_PROVIDER must be either 'openai' or 'anthropic'."),
-      { status: 500 },
-    );
+  if (!["groq", "openai", "anthropic"].includes(LLM_PROVIDER)) {
+    throw Object.assign(new Error("LLM_PROVIDER must be 'groq', 'openai', or 'anthropic'."), { status: 500 });
   }
-  if (LLM_PROVIDER === "openai" && !LLM_API_KEY && process.env.GROQ_API_KEY) {
-    return sendLlmRequest("Groq", groqRequestConfig(messages));
-  }
-  try {
-    return await sendLlmRequest(
-      LLM_PROVIDER === "openai" ? "OpenAI" : "Anthropic",
-      llmRequestConfig(messages),
-    );
-  } catch (primaryError) {
-    if (LLM_PROVIDER !== "openai" || !process.env.GROQ_API_KEY) {
-      throw primaryError;
+  if (LLM_PROVIDER === "groq") {
+    if (!process.env.GROQ_API_KEY) {
+      throw Object.assign(new Error("GROQ_API_KEY is required when LLM_PROVIDER=groq."), { status: 503 });
     }
     try {
-      const payload = await sendLlmRequest(
-        "Groq fallback",
-        groqRequestConfig(messages),
-      );
+      return await sendLlmRequest("Groq", groqRequestConfig(messages));
+    } catch (primaryError) {
+      const openaiKey = process.env.OPENAI_API_KEY;
+      if (!openaiKey) throw primaryError;
+      try {
+        const request = {
+          url: process.env.OPENAI_BASE_URL || "https://api.openai.com/v1/chat/completions",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${openaiKey}` },
+          body: { model: process.env.OPENAI_MODEL || "gpt-4o-mini", messages },
+        };
+        console.warn("Groq chat request failed; using configured OpenAI fallback.");
+        return await sendLlmRequest("OpenAI fallback", request);
+      } catch (fallbackError) {
+        throw Object.assign(new Error(`Groq failed: ${primaryError.message} OpenAI fallback failed: ${fallbackError.message}`), { status: 502, upstreamStatus: fallbackError.upstreamStatus, payload: fallbackError.payload, cause: fallbackError });
+      }
+    }
+  }
+  try {
+    return await sendLlmRequest(LLM_PROVIDER === "openai" ? "OpenAI" : "Anthropic", llmRequestConfig(messages));
+  } catch (primaryError) {
+    if (LLM_PROVIDER !== "openai" || !process.env.GROQ_API_KEY) throw primaryError;
+    try {
       console.warn("OpenAI chat request failed; using Groq fallback.");
-      return payload;
+      return await sendLlmRequest("Groq fallback", groqRequestConfig(messages));
     } catch (fallbackError) {
-      throw Object.assign(
-        new Error(
-          `OpenAI failed: ${primaryError.message} Groq fallback failed: ${fallbackError.message}`,
-        ),
-        {
-          status: 502,
-          upstreamStatus: fallbackError.upstreamStatus,
-          payload: fallbackError.payload,
-          cause: fallbackError,
-        },
-      );
+      throw Object.assign(new Error(`OpenAI failed: ${primaryError.message} Groq fallback failed: ${fallbackError.message}`), { status: 502, upstreamStatus: fallbackError.upstreamStatus, payload: fallbackError.payload, cause: fallbackError });
     }
   }
 }
@@ -899,7 +901,7 @@ function llmResponseText(payload) {
 }
 
 function openAiCompatibleResponse(payload) {
-  if (LLM_PROVIDER === "openai") return payload;
+  if (LLM_PROVIDER === "openai" || LLM_PROVIDER === "groq") return payload;
   return {
     choices: [
       {
@@ -1184,7 +1186,9 @@ app.post(
 app.post("/api/chat", async (req, res) => {
   if (
     !LLM_API_KEY &&
-    !(LLM_PROVIDER === "openai" && process.env.GROQ_API_KEY)
+    !(LLM_PROVIDER === "openai" && process.env.GROQ_API_KEY) &&
+    !(LLM_PROVIDER === "groq" && process.env.GROQ_API_KEY) &&
+    !(LLM_PROVIDER === "groq" && process.env.GROQ_API_KEY)
   ) {
     res.status(501).json({
       error: "No API key configured for the selected LLM provider.",
