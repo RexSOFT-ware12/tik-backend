@@ -139,15 +139,23 @@ Output only the words the avatar should speak. No reasoning, labels or markdown.
     return normalized.endsWith('/chat/completions') ? normalized : `${normalized}/chat/completions`;
   }
 
-  // Provider chain: Groq first, OpenAI as optional fallback. A provider that just failed is
-  // skipped for a minute so a slow outage does not delay every reply in the queue.
+  // Text replies use only the provider selected by LLM_PROVIDER; vision has a separate fallback chain.
+  // A failed provider is skipped for a minute so a slow outage does not delay every reply in the queue.
   const providerDownUntil = {};
   function llmProviders() {
-    const list = [];
-    if (process.env.GROQ_API_KEY) list.push({ name: 'Groq', url: groqChatCompletionsUrl(), key: process.env.GROQ_API_KEY, model: process.env.GROQ_TEXT_MODEL || process.env.GROQ_MODEL || 'openai/gpt-oss-20b' });
-    const openaiKey = process.env.OPENAI_API_KEY || process.env.LLM_API_KEY;
-    if (openaiKey) list.push({ name: 'OpenAI', url: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1/chat/completions', key: openaiKey, model: process.env.OPENAI_MODEL || process.env.LLM_MODEL || 'gpt-4o-mini' });
-    return list;
+    const selected = (process.env.LLM_PROVIDER || 'groq').toLowerCase();
+    if (selected === 'groq') return process.env.GROQ_API_KEY ? [{
+      name: 'Groq', url: groqChatCompletionsUrl(), key: process.env.GROQ_API_KEY,
+      model: process.env.GROQ_TEXT_MODEL || process.env.GROQ_MODEL || 'openai/gpt-oss-20b'
+    }] : [];
+    if (selected === 'openai') {
+      const key = process.env.OPENAI_API_KEY || process.env.LLM_API_KEY;
+      return key ? [{
+        name: 'OpenAI', url: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1/chat/completions', key,
+        model: process.env.OPENAI_MODEL || process.env.LLM_MODEL || 'gpt-4o-mini'
+      }] : [];
+    }
+    return [];
   }
   async function chatCompletion({ url, key, model, messages, maxTokens, temperature }) {
     const r = await fetch(url, {

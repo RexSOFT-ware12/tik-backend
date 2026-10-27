@@ -4,7 +4,7 @@ This build keeps the existing Perxona `sv-presenter` avatar integration and adds
 
 - **Primary input:** the backend listens to public TikTok LIVE chat, member/join and gift events with `tiktok-live-connector`.
 - **Screen input:** the standalone ScreenCapture/live-ocr desktop app performs local OCR and sends text-only webhook events to the backend. Groq text (`GROQ_TEXT_MODEL`) selects relevant viewer interactions; no screenshot or vision-model call is required.
-- **AI host:** Groq (`openai/gpt-oss-20b`) creates short spoken responses, with OpenAI as an optional fallback; the existing avatar presenter speaks them when Avatar Studio is open and the presenter has been initialized.
+- **AI host:** Groq (`openai/gpt-oss-20b`) creates short spoken responses for text; OpenAI is not used as a text fallback; the existing avatar presenter speaks them when Avatar Studio is open and the presenter has been initialized.
 - **Knowledge:** custom facts/FAQs are stored in MongoDB through Mongoose and included in AI context.\n- **Viewer memory:** viewers are saved by TikTok user ID where available, otherwise by normalized username; recent conversation turns are reused for continuity and returning-viewer greetings. The dashboard includes a Viewer memory panel.
 - **Hosting:** the Render Blueprint deploys the Node 22.9+ Express service and serves the static dashboard; the frontend can also be hosted separately.
 

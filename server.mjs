@@ -864,23 +864,7 @@ async function requestLlmCompletion(messages) {
     if (!process.env.GROQ_API_KEY) {
       throw Object.assign(new Error("GROQ_API_KEY is required when LLM_PROVIDER=groq."), { status: 503 });
     }
-    try {
-      return await sendLlmRequest("Groq", groqRequestConfig(messages));
-    } catch (primaryError) {
-      const openaiKey = process.env.OPENAI_API_KEY;
-      if (!openaiKey) throw primaryError;
-      try {
-        const request = {
-          url: process.env.OPENAI_BASE_URL || "https://api.openai.com/v1/chat/completions",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${openaiKey}` },
-          body: { model: process.env.OPENAI_MODEL || "gpt-4o-mini", messages },
-        };
-        console.warn("Groq chat request failed; using configured OpenAI fallback.");
-        return await sendLlmRequest("OpenAI fallback", request);
-      } catch (fallbackError) {
-        throw Object.assign(new Error(`Groq failed: ${primaryError.message} OpenAI fallback failed: ${fallbackError.message}`), { status: 502, upstreamStatus: fallbackError.upstreamStatus, payload: fallbackError.payload, cause: fallbackError });
-      }
-    }
+    return await sendLlmRequest("Groq", groqRequestConfig(messages));
   }
   try {
     return await sendLlmRequest(LLM_PROVIDER === "openai" ? "OpenAI" : "Anthropic", llmRequestConfig(messages));
